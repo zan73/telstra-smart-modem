@@ -4,6 +4,7 @@
 import ipaddress
 import re
 import bs4
+import json
 
 # Compiled regular expressions:
 re_mac = re.compile(r"(?:[0-9a-f]{2}[:]){5}[0-9a-f]{2}")
@@ -75,8 +76,16 @@ def validateMAC(mac: str) -> str:
 
 class Devices:
 
-    def __init__(self, soup):
-        self.devices = parseDevices(soup)
+    def __init__(self, soup, LH1000 = False):
+        if not LH1000:
+            self.devices = parseDevices(soup)
+        else:
+            self.devices = json.loads(soup.replace('station_info=',''))['stations']
+            for dev in self.devices:
+                dev['mac'] = dev.pop('station_mac').lower()
+                dev['online'] = dev['online'] == '1'
+                dev['hostname'] = dev.pop('station_name')
+                dev['connection'] = dev.pop('connect_type')
 
     # Get a specific device's details from it's MAC address.
     def getDevice(self, mac: str) -> dict:

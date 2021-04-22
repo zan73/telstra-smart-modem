@@ -5,6 +5,8 @@ import ipaddress
 
 import bs4
 import requests
+import re
+import hashlib
 
 import telstra_smart_modem.exceptions as tsm_errors
 import telstra_smart_modem.srp as tsm_srp
@@ -22,10 +24,15 @@ class ModemBase:
     CSRFtoken = None
 
     def __init__(self, ip: str, username: str, password: str, _init_authenticate: bool = True):
-        host = ipaddress.IPv4Address(ip)
-        self.base_url = f"http://{host}"
+        self.host = ipaddress.IPv4Address(ip)
+        self.base_url = f"http://{self.host}"
         self.username = str(username)
         self.password = str(password)
+        self.LH1000Header = {'Host': f"{self.host}", 'Origin': f"{self.base_url}", 'Referer': f"{self.base_url}/login.htm"}
+        self.LH1000Post = {'httoken': None,
+                           'usr': hashlib.sha512(hashlib.md5(self.username.encode('utf-8')).hexdigest().encode('utf-8')).hexdigest(),
+                           'pws': hashlib.sha512(hashlib.md5(self.password.encode('utf-8')).hexdigest().encode('utf-8')).hexdigest()}
+
 
         if _init_authenticate:
             self._authenticate()
@@ -44,7 +51,7 @@ class ModemBase:
         if CSRFtoken:
             self.CSRFtoken = CSRFtoken['content']
         else:
-            raise tsm_errors.TSMModemError("Expected CSRFtoken but didn't find one")
+            raise tsm_errors.TSMNoToken("Expected CSRFtoken but didn't find one")
 
     # Extract the CSRFtoken from raw html.
     def _extractCSRFtoken_html(self, html):
@@ -103,6 +110,57 @@ class ModemBase:
             M = srp.process_challenge(s, B)
             secondAuthRequest(M)
 
+        def _utf8_decode(utftext):
+            s = ''
+            i = 0
+            while i < len(utftext):
+                c = ord(utftext[i])
+                if c < 128:
+                    s = s + chr(c)
+                    i = i + 1
+                elif c > 191 and c < 224:
+                    c2 = ord(utftext[i + 1])
+                    s = s + chr(((c & 31) << 6) | (c2 & 63))
+                    i = i + 2
+                else:
+                    c2 = ord(utftext[i + 1])
+                    c3 = ord(utftext[i + 2])
+                    s = s + chr(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63))
+                    i = i + 3
+            return s
+
+        def decode(s):
+            _keyStr = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
+            output = ''
+            i = 0
+            #replace all chars not in _keyStr
+            s = re.sub(r'[^' + _keyStr + ']', '', s)
+            while i < len(s):
+                enc1 = _keyStr.find(s[i:i+1])
+                i = i + 1
+                enc2 = _keyStr.find(s[i:i+1])
+                i = i + 1
+                enc3 = _keyStr.find(s[i:i+1])
+                i = i + 1
+                enc4 = _keyStr.find(s[i:i+1])
+                i = i + 1
+                chr1 = (enc1 << 2) | (enc2 >> 4)
+                chr2 = ((enc2 & 15) << 4) | (enc3 >> 2)
+                chr3 = ((enc3 & 3) << 6) | enc4
+                output = output + chr(chr1)
+                if enc3 != 64:
+                    output = output + chr(chr2)
+                if enc4 != 64:
+                    output = output + chr(chr3)
+            output = _utf8_decode(output)
+            return output
+
+        def getLH1000Token():
+            response = self.session.get(f"{self.base_url}/login.htm")
+            if response.status_code == 200:
+                bs = bs4.BeautifulSoup(response.text, 'html.parser')
+                self.LH1000Post['httoken'] = decode(bs.find('img', src=re.compile('data:'))['src'][78:])
+
         try:
             if soup:
                 self._extractCSRFtoken(soup)
@@ -118,6 +176,9 @@ class ModemBase:
 
         except tsm_errors.TSMPasswordIncorrect as e:
             raise e from None
+
+        except tsm_errors.TSMNoToken:
+            getLH1000Token()
 
         except tsm_errors.TSMBase:
             raise

@@ -14,3 +14,6 @@ class TSMPasswordIncorrect(TSMAuthError):
 
 class TSMModemError(TSMBase):
     """Errors relating to the modem not working correctly"""
+
+class TSMNoToken(TSMAuthError):
+    """Expected CSRFtoken but didn't find one"""
