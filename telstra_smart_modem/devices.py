@@ -47,6 +47,9 @@ def parseDevices(soup):
         cols = row.find_all('td')
         device = {}
         for index, item in enumerate(cols):
+            #Skip Priority and Priority Edit columns for Telstra Smart Modem Gen1 (Technicolor DJA0230TLS)
+            if index >= len(headers):
+                break
             header = headers[index]
 
             if index == 0:
